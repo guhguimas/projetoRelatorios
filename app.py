@@ -1,6 +1,8 @@
 import streamlit as st
 from pages.controle_datas import render_controle_datas
 
+st.set_option("client.showSidebarNavigation", False)
+
 st.set_page_config(
     page_title="Relatórios Empresariais",
     layout="wide"
