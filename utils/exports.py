@@ -1,6 +1,7 @@
 import io
 import pandas as pd
 
+
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Relatorio") -> bytes:
     output = io.BytesIO()
 
