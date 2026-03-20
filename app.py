@@ -104,6 +104,71 @@ def limpar_sla(valor):
     valor = valor.replace("e", "")
     return valor.strip()
 
+def ajustar_estrutura(df):
+    """
+    Limpa qualquer planilha padrão bagunçada:
+    - encontra cabeçalho automaticamente
+    - remove linhas acima
+    - remove colunas vazias/Unnamed
+    - resolve duplicados
+    """
+
+    # 🔍 encontrar linha do cabeçalho (onde tem "Convênio")
+    header_index = None
+
+    for i, row in df.iterrows():
+        if any("CONVENIO" in str(x).upper() for x in row.values):
+            header_index = i
+            break
+
+    if header_index is not None:
+        df.columns = df.iloc[header_index]
+        df = df.iloc[header_index + 1:]
+        df = df.reset_index(drop=True)
+
+    # 🧹 remover colunas vazias ou "Unnamed"
+    df = df.loc[:, df.columns.notna()]
+    df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed", case=False)]
+
+    # 🧼 limpar nomes
+    df.columns = [str(col).strip() for col in df.columns]
+
+    # 🔁 tratar duplicados (SLA, SLA_1, SLA_2...)
+    cols = []
+    count = {}
+
+    for col in df.columns:
+        if col in count:
+            count[col] += 1
+            cols.append(f"{col}_{count[col]}")
+        else:
+            count[col] = 0
+            cols.append(col)
+
+    df.columns = cols
+
+    return df
+
+def formatar_dados(df):
+    """
+    Formata automaticamente:
+    - valores monetários
+    - porcentagens
+    """
+
+    for col in df.columns:
+
+        # 💰 valores monetários (heurística)
+        if any(x in col.upper() for x in ["VALOR", "PMT", "INADIMPL"]):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = df[col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
+
+        # 📊 porcentagem
+        if "%" in col or "PERCENT" in col.upper():
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = df[col].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "")
+
+    return df
 
 # ==============================
 # 📊 CONTROLE DE DATAS
@@ -154,7 +219,8 @@ def render_controle_datas():
         st.info("Nenhuma base carregada ainda.")
         return
 
-    df = ajustar_header(df)
+    df = ajustar_estrutura(df)
+    df = formatar_dados(df)
 
     # ==============================
     # 🎛 FILTROS
@@ -351,7 +417,8 @@ def render_relatorio(nome_relatorio, pasta_relatorio):
         st.info("Nenhuma base carregada ainda.")
         return
 
-    df = ajustar_header(df)
+    df = ajustar_estrutura(df)
+    df = formatar_dados(df)
 
     # ==============================
     # 🔎 FILTROS
