@@ -77,30 +77,61 @@ def normalizar_texto(texto):
 # ==============================
 def ajustar_estrutura(df):
 
+    import unicodedata
+
+    def normalizar(texto):
+        if pd.isna(texto):
+            return ""
+        texto = str(texto)
+        texto = unicodedata.normalize("NFKD", texto)
+        texto = texto.encode("ASCII", "ignore").decode("utf-8")
+        return texto.upper().strip()
+
     header_index = None
 
+    # 🔍 achar linha do "Convênio"
     for i, row in df.iterrows():
-        valores = [normalizar_texto(x) for x in row.values]
-
+        valores = [normalizar(x) for x in row.values]
         if any("CONVENIO" in v for v in valores):
             header_index = i
             break
 
-    if header_index is not None:
-        df.columns = df.iloc[header_index]
-        df = df.iloc[header_index + 1:]
-        df = df.reset_index(drop=True)
-    else:
-        st.warning("⚠️ Cabeçalho não identificado automaticamente")
+    if header_index is None:
+        st.warning("⚠️ Cabeçalho não encontrado")
+        return df
 
-    # remover colunas lixo
+    # ==============================
+    # 🧠 PEGAR 2 LINHAS DE HEADER
+    # ==============================
+    header_1 = df.iloc[header_index - 1] if header_index > 0 else None
+    header_2 = df.iloc[header_index]
+
+    colunas = []
+
+    for i in range(len(header_2)):
+        h1 = normalizar(header_1[i]) if header_1 is not None else ""
+        h2 = normalizar(header_2[i])
+
+        if h1 and h2:
+            nome = f"{h1}_{h2}"
+        elif h2:
+            nome = h2
+        else:
+            nome = h1
+
+        colunas.append(nome)
+
+    df.columns = colunas
+
+    # remover linhas de header
+    df = df.iloc[header_index + 1:]
+    df = df.reset_index(drop=True)
+
+    # 🧹 limpar colunas inválidas
     df = df.loc[:, df.columns.notna()]
-    df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed", case=False)]
+    df = df.loc[:, ~df.columns.astype(str).str.contains("^UNNAMED", case=False)]
 
-    # normalizar nomes das colunas
-    df.columns = [normalizar_texto(col) for col in df.columns]
-
-    # tratar duplicados
+    # 🔁 tratar duplicados
     cols = []
     count = {}
 
