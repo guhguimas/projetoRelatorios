@@ -212,42 +212,67 @@ def aplicar_filtros(df):
 
     col1, col2 = st.columns(2)
 
-    # CONVÊNIO
+    # ==============================
+    # 🔍 IDENTIFICAR COLUNA DE DATA
+    # ==============================
+    col_data = None
+
+    for col in df.columns:
+        nome = col.upper()
+        if "DATA" in nome or "CHEGADA" in nome:
+            col_data = col
+            break
+
+    # ==============================
+    # 🏢 FILTRO CONVÊNIO
+    # ==============================
     with col1:
         if "CONVENIO" in df.columns:
             lista = sorted(df["CONVENIO"].dropna().unique())
-            filtro_convenio = st.multiselect("Convênio", lista)
+
+            filtro_convenio = st.multiselect(
+                "Convênio",
+                options=lista
+            )
         else:
             filtro_convenio = []
 
-    # DATA
-    if col_data:
-        df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
+    # ==============================
+    # 📅 FILTRO DATA (SE EXISTIR)
+    # ==============================
+    with col2:
+        if col_data:
 
-        # remover NaT antes
-        datas_validas = df[col_data].dropna()
+            df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
 
-        if not datas_validas.empty:
-            data_min = datas_validas.min()
-            data_max = datas_validas.max()
+            datas_validas = df[col_data].dropna()
 
-            filtro_data = st.date_input(
-                "Período",
-                value=(data_min, data_max)
-            )
+            if not datas_validas.empty:
+                data_min = datas_validas.min()
+                data_max = datas_validas.max()
+
+                filtro_data = st.date_input(
+                    "Período",
+                    value=(data_min, data_max)
+                )
+            else:
+                filtro_data = None
         else:
             filtro_data = None
-    else:
-        filtro_data = None
 
-    # aplicar filtros
+    # ==============================
+    # 🎯 APLICAR FILTROS
+    # ==============================
     df_filtrado = df.copy()
 
     if filtro_convenio:
-        df_filtrado = df_filtrado[df_filtrado["CONVENIO"].isin(filtro_convenio)]
+        df_filtrado = df_filtrado[
+            df_filtrado["CONVENIO"].isin(filtro_convenio)
+        ]
 
     if filtro_data and col_data:
         inicio, fim = filtro_data
+
         df_filtrado = df_filtrado[
             (df_filtrado[col_data] >= pd.to_datetime(inicio)) &
             (df_filtrado[col_data] <= pd.to_datetime(fim))
