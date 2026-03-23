@@ -145,6 +145,19 @@ def ajustar_estrutura(df):
 
     df.columns = cols
 
+    # 🧹 remover colunas totalmente vazias
+    df = df.dropna(axis=1, how="all")
+
+    # 🧹 remover linhas totalmente vazias
+    df = df.dropna(axis=0, how="all")
+
+    # 🧹 remover colunas com nome vazio ou None
+    df = df.loc[:, df.columns.astype(str).str.strip() != ""]
+    df = df.loc[:, ~df.columns.astype(str).str.upper().isin(["NONE", "NAN"])]
+
+    df.columns = [col.strip("_") for col in df.columns]
+    df.columns = [col.replace("__", "_") for col in df.columns]
+
     return df
 
 # ==============================
@@ -167,18 +180,25 @@ def formatar_dados(df):
 
     for col in df.columns:
 
-        # 💰 valores monetários
-        if any(x in col for x in ["VALOR", "PMT", "INADIMPL"]):
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            df[col] = df[col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
+        col_upper = col.upper()
 
-        # 📊 porcentagem
-        if "%" in col or "PERCENT" in col:
+        # 💰 MONETÁRIO
+        if any(x in col_upper for x in ["VALOR", "PMT", "INADIMPL"]):
             df[col] = pd.to_numeric(df[col], errors="coerce")
-            df[col] = df[col].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "")
+            df[col] = df[col].apply(
+                lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                if pd.notnull(x) else ""
+            )
+
+        # 📊 PORCENTAGEM
+        elif "%" in col or "PERCENT" in col_upper:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = df[col].apply(
+                lambda x: f"{x:.2%}".replace(".", ",") if pd.notnull(x) else ""
+            )
 
         # ⏱ SLA
-        if "SLA" in col:
+        elif "SLA" in col_upper:
             df[col] = df[col].apply(limpar_sla)
 
     return df
@@ -201,23 +221,24 @@ def aplicar_filtros(df):
             filtro_convenio = []
 
     # DATA
-    with col2:
-        col_data = None
+    if col_data:
+        df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
 
-        for col in df.columns:
-            if "DATA" in col or "CHEGADA" in col:
-                col_data = col
-                break
+        # remover NaT antes
+        datas_validas = df[col_data].dropna()
 
-        if col_data:
-            df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
+        if not datas_validas.empty:
+            data_min = datas_validas.min()
+            data_max = datas_validas.max()
 
-            data_min = df[col_data].min()
-            data_max = df[col_data].max()
-
-            filtro_data = st.date_input("Período", value=(data_min, data_max))
+            filtro_data = st.date_input(
+                "Período",
+                value=(data_min, data_max)
+            )
         else:
             filtro_data = None
+    else:
+        filtro_data = None
 
     # aplicar filtros
     df_filtrado = df.copy()
