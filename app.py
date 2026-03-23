@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
 
 # ==============================
 # 🔒 ADMIN VIA TOKEN
@@ -44,15 +45,12 @@ def aplicar_estilo_global():
             .relatorio-titulo {
                 font-size: 2.6rem;
                 font-weight: 800;
-                margin-bottom: 0.2rem;
             }
-
             .relatorio-subtitulo {
                 color: #6b7280;
-                font-size: 0.95rem;
-                margin-bottom: 1.2rem;
+                font-size: 0.9rem;
+                margin-bottom: 1rem;
             }
-
             .caixa-upload {
                 padding: 1rem;
                 border: 1px solid #e5e7eb;
@@ -64,22 +62,48 @@ def aplicar_estilo_global():
     """, unsafe_allow_html=True)
 
 # ==============================
-# 🧠 AJUSTE HEADER
+# 🔤 NORMALIZAR TEXTO (REMOVE ACENTO)
 # ==============================
-def ajustar_header(df):
+def normalizar_texto(texto):
+    if pd.isna(texto):
+        return ""
+    texto = str(texto)
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = texto.encode("ASCII", "ignore").decode("utf-8")
+    return texto.upper().strip()
+
+# ==============================
+# 🧠 AJUSTAR ESTRUTURA
+# ==============================
+def ajustar_estrutura(df):
+
+    header_index = None
+
     for i, row in df.iterrows():
-        if "CONVENIO" in str(row.values):
-            df.columns = df.iloc[i]
-            df = df.iloc[i+1:]
-            df = df.reset_index(drop=True)
+        valores = [normalizar_texto(x) for x in row.values]
+
+        if any("CONVENIO" in v for v in valores):
+            header_index = i
             break
 
-    df = df.loc[:, df.columns.notna()]
-    df.columns = [str(col).strip() for col in df.columns]
+    if header_index is not None:
+        df.columns = df.iloc[header_index]
+        df = df.iloc[header_index + 1:]
+        df = df.reset_index(drop=True)
+    else:
+        st.warning("⚠️ Cabeçalho não identificado automaticamente")
 
-    # remover duplicados
+    # remover colunas lixo
+    df = df.loc[:, df.columns.notna()]
+    df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed", case=False)]
+
+    # normalizar nomes das colunas
+    df.columns = [normalizar_texto(col) for col in df.columns]
+
+    # tratar duplicados
     cols = []
     count = {}
+
     for col in df.columns:
         if col in count:
             count[col] += 1
@@ -89,6 +113,7 @@ def ajustar_header(df):
             cols.append(col)
 
     df.columns = cols
+
     return df
 
 # ==============================
@@ -104,147 +129,58 @@ def limpar_sla(valor):
     valor = valor.replace("e", "")
     return valor.strip()
 
-def ajustar_estrutura(df):
-    """
-    Limpa qualquer planilha padrão bagunçada:
-    - encontra cabeçalho automaticamente
-    - remove linhas acima
-    - remove colunas vazias/Unnamed
-    - resolve duplicados
-    """
-
-    # 🔍 encontrar linha do cabeçalho (onde tem "Convênio")
-    header_index = None
-
-    for i, row in df.iterrows():
-        if any("CONVENIO" in str(x).upper() for x in row.values):
-            header_index = i
-            break
-
-    if header_index is not None:
-        df.columns = df.iloc[header_index]
-        df = df.iloc[header_index + 1:]
-        df = df.reset_index(drop=True)
-
-    # 🧹 remover colunas vazias ou "Unnamed"
-    df = df.loc[:, df.columns.notna()]
-    df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed", case=False)]
-
-    # 🧼 limpar nomes
-    df.columns = [str(col).strip() for col in df.columns]
-
-    # 🔁 tratar duplicados (SLA, SLA_1, SLA_2...)
-    cols = []
-    count = {}
-
-    for col in df.columns:
-        if col in count:
-            count[col] += 1
-            cols.append(f"{col}_{count[col]}")
-        else:
-            count[col] = 0
-            cols.append(col)
-
-    df.columns = cols
-
-    return df
-
+# ==============================
+# 🎨 FORMATAR DADOS
+# ==============================
 def formatar_dados(df):
-    """
-    Formata automaticamente:
-    - valores monetários
-    - porcentagens
-    """
 
     for col in df.columns:
 
-        # 💰 valores monetários (heurística)
-        if any(x in col.upper() for x in ["VALOR", "PMT", "INADIMPL"]):
+        # 💰 valores monetários
+        if any(x in col for x in ["VALOR", "PMT", "INADIMPL"]):
             df[col] = pd.to_numeric(df[col], errors="coerce")
             df[col] = df[col].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else "")
 
         # 📊 porcentagem
-        if "%" in col or "PERCENT" in col.upper():
+        if "%" in col or "PERCENT" in col:
             df[col] = pd.to_numeric(df[col], errors="coerce")
             df[col] = df[col].apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "")
+
+        # ⏱ SLA
+        if "SLA" in col:
+            df[col] = df[col].apply(limpar_sla)
 
     return df
 
 # ==============================
-# 📊 CONTROLE DE DATAS
+# 🔎 FILTROS
 # ==============================
-def render_controle_datas():
-    nome_relatorio = "CONTROLE DE DATAS"
-    pasta_relatorio = "controle_datas"
+def aplicar_filtros(df):
 
-    st.markdown(f'<div class="relatorio-titulo">{nome_relatorio}</div>', unsafe_allow_html=True)
-
-    # Última atualização
-    ultima = obter_ultima_atualizacao(pasta_relatorio)
-    if ultima:
-        st.markdown(f'<div class="relatorio-subtitulo">Última atualização: {ultima}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="relatorio-subtitulo">Aguardando upload</div>', unsafe_allow_html=True)
-
-    # ==============================
-    # 🔒 UPLOAD
-    # ==============================
-    with st.container():
-        st.markdown('<div class="caixa-upload">', unsafe_allow_html=True)
-        st.subheader("Upload da planilha")
-
-        if admin:
-            st.success("Modo administrador ativo")
-
-            uploaded_file = st.file_uploader("Selecione a planilha", type=["xlsx", "xls"])
-
-            if st.button("Salvar planilha"):
-                if uploaded_file:
-                    salvar_upload_relatorio(uploaded_file, pasta_relatorio)
-                    st.success("Upload realizado com sucesso!")
-                    st.rerun()
-                else:
-                    st.warning("Selecione um arquivo")
-        else:
-            st.info("Visualização disponível")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # ==============================
-    # 📥 CARREGAR BASE
-    # ==============================
-    df = carregar_base_atual(pasta_relatorio)
-
-    if df is None or df.empty:
-        st.info("Nenhuma base carregada ainda.")
-        return
-
-    df = ajustar_estrutura(df)
-    df = formatar_dados(df)
-
-    # ==============================
-    # 🎛 FILTROS
-    # ==============================
     st.markdown("### 🔎 Filtros")
 
     col1, col2 = st.columns(2)
 
+    # CONVÊNIO
     with col1:
         if "CONVENIO" in df.columns:
-            convenios = sorted(df["CONVENIO"].dropna().unique())
-            filtro_convenio = st.multiselect("Convênio", convenios)
+            lista = sorted(df["CONVENIO"].dropna().unique())
+            filtro_convenio = st.multiselect("Convênio", lista)
         else:
             filtro_convenio = []
 
+    # DATA
     with col2:
         col_data = None
+
         for col in df.columns:
-            if "DATA" in col.upper() or "CHEGADA" in col.upper():
+            if "DATA" in col or "CHEGADA" in col:
                 col_data = col
                 break
 
         if col_data:
             df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
+
             data_min = df[col_data].min()
             data_max = df[col_data].max()
 
@@ -252,111 +188,7 @@ def render_controle_datas():
         else:
             filtro_data = None
 
-    # ==============================
-    # 🧠 APLICAR FILTROS
-    # ==============================
-    df_filtrado = df.copy()
-
-    if filtro_convenio:
-        df_filtrado = df_filtrado[df_filtrado["CONVENIO"].isin(filtro_convenio)]
-
-    if filtro_data and col_data:
-        inicio, fim = filtro_data
-        df_filtrado = df_filtrado[
-            (df_filtrado[col_data] >= pd.to_datetime(inicio)) &
-            (df_filtrado[col_data] <= pd.to_datetime(fim))
-        ]
-
-    # ==============================
-    # 🧠 LIMPAR SLA
-    # ==============================
-    for col in df_filtrado.columns:
-        if "SLA" in col.upper():
-            df_filtrado[col] = df_filtrado[col].apply(limpar_sla)
-
-    # ==============================
-    # 📊 TABELA
-    # ==============================
-    st.data_editor(
-        df_filtrado,
-        width="stretch",
-        hide_index=True,
-        height=650,
-        num_rows="fixed",
-        column_config={
-            "CONVENIO": st.column_config.TextColumn("Convênio"),
-        }
-    )
-
-    # ==============================
-    # 📥 DOWNLOAD + HISTÓRICO
-    # ==============================
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        excel = dataframe_to_excel_bytes(df_filtrado, "controle")
-        st.download_button("📥 Baixar Excel", data=excel, file_name="controle.xlsx")
-
-    with col2:
-        st.metric("Registros exibidos", len(df_filtrado))
-
-    with col3:
-        hist = listar_historico_relatorio(pasta_relatorio)
-        if hist:
-            st.caption("Histórico:")
-            for h in hist[:5]:
-                st.caption(f"• {h}")
-
-# ==============================
-# 📄 PLACEHOLDER
-# ==============================
-def render_placeholder(nome):
-    st.markdown(f'<div class="relatorio-titulo">{nome}</div>', unsafe_allow_html=True)
-    st.info("Relatório em construção.")
-
-def aplicar_filtros(df):
-
-    st.markdown("### 🔎 Filtros")
-
-    col1, col2 = st.columns(2)
-
-    # ===== CONVÊNIO =====
-    with col1:
-        if "CONVENIO" in df.columns:
-            lista = sorted(df["CONVENIO"].dropna().unique())
-
-            filtro_convenio = st.multiselect(
-                "Convênio",
-                options=lista
-            )
-        else:
-            filtro_convenio = []
-
-    # ===== DATA =====
-    with col2:
-        col_data = None
-
-        for col in df.columns:
-            if "DATA" in col.upper() or "CHEGADA" in col.upper():
-                col_data = col
-                break
-
-        if col_data:
-            df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
-
-            data_min = df[col_data].min()
-            data_max = df[col_data].max()
-
-            filtro_data = st.date_input(
-                "Período",
-                value=(data_min, data_max)
-            )
-        else:
-            filtro_data = None
-
-    # ==============================
-    # 🎯 APLICAÇÃO DOS FILTROS
-    # ==============================
+    # aplicar filtros
     df_filtrado = df.copy()
 
     if filtro_convenio:
@@ -371,6 +203,9 @@ def aplicar_filtros(df):
 
     return df_filtrado
 
+# ==============================
+# 📊 RENDER PADRÃO
+# ==============================
 def render_relatorio(nome_relatorio, pasta_relatorio):
 
     st.markdown(f'<div class="relatorio-titulo">{nome_relatorio}</div>', unsafe_allow_html=True)
@@ -382,12 +217,9 @@ def render_relatorio(nome_relatorio, pasta_relatorio):
     else:
         st.markdown('<div class="relatorio-subtitulo">Aguardando upload</div>', unsafe_allow_html=True)
 
-    # ==============================
-    # 🔒 UPLOAD
-    # ==============================
+    # UPLOAD
     with st.container():
         st.markdown('<div class="caixa-upload">', unsafe_allow_html=True)
-        st.subheader("Upload da planilha")
 
         if admin:
             uploaded_file = st.file_uploader(
@@ -408,9 +240,7 @@ def render_relatorio(nome_relatorio, pasta_relatorio):
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ==============================
-    # 📥 DADOS
-    # ==============================
+    # DADOS
     df = carregar_base_atual(pasta_relatorio)
 
     if df is None or df.empty:
@@ -418,16 +248,14 @@ def render_relatorio(nome_relatorio, pasta_relatorio):
         return
 
     df = ajustar_estrutura(df)
-    df = formatar_dados(df)
 
-    # ==============================
-    # 🔎 FILTROS
-    # ==============================
+    # 🔎 FILTROS PRIMEIRO
     df_filtrado = aplicar_filtros(df)
 
-    # ==============================
-    # 📊 TABELA
-    # ==============================
+    # 🎨 FORMATAR DEPOIS
+    df_filtrado = formatar_dados(df_filtrado)
+
+    # TABELA
     st.markdown("---")
 
     st.data_editor(
@@ -438,9 +266,7 @@ def render_relatorio(nome_relatorio, pasta_relatorio):
         disabled=True
     )
 
-    # ==============================
-    # 📥 DOWNLOAD
-    # ==============================
+    # DOWNLOAD
     excel = dataframe_to_excel_bytes(df_filtrado, pasta_relatorio)
 
     st.download_button(
@@ -485,6 +311,7 @@ def main():
 
     elif opcao == "TABELA GERAL POR CONSIGNATARIA":
         render_relatorio("TABELA GERAL POR CONSIGNATARIA", "tabela_consignataria")
+
 
 if __name__ == "__main__":
     main()
