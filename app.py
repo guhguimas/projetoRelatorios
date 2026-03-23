@@ -77,8 +77,6 @@ def normalizar_texto(texto):
 # ==============================
 def ajustar_estrutura(df):
 
-    import unicodedata
-
     def normalizar(texto):
         if pd.isna(texto):
             return ""
@@ -89,7 +87,7 @@ def ajustar_estrutura(df):
 
     header_index = None
 
-    # 🔍 achar linha do "Convênio"
+    # 🔍 encontrar linha do cabeçalho real
     for i, row in df.iterrows():
         valores = [normalizar(x) for x in row.values]
         if any("CONVENIO" in v for v in valores):
@@ -100,9 +98,6 @@ def ajustar_estrutura(df):
         st.warning("⚠️ Cabeçalho não encontrado")
         return df
 
-    # ==============================
-    # 🧠 PEGAR 2 LINHAS DE HEADER
-    # ==============================
     header_1 = df.iloc[header_index - 1] if header_index > 0 else None
     header_2 = df.iloc[header_index]
 
@@ -123,15 +118,13 @@ def ajustar_estrutura(df):
 
     df.columns = colunas
 
-    # remover linhas de header
-    df = df.iloc[header_index + 1:]
-    df = df.reset_index(drop=True)
+    # remover headers
+    df = df.iloc[header_index + 1:].reset_index(drop=True)
 
-    # 🧹 limpar colunas inválidas
-    df = df.loc[:, df.columns.notna()]
-    df = df.loc[:, ~df.columns.astype(str).str.contains("^UNNAMED", case=False)]
+    # limpeza final
+    df = limpar_df(df)
 
-    # 🔁 tratar duplicados
+    # remover duplicados
     cols = []
     count = {}
 
@@ -145,33 +138,36 @@ def ajustar_estrutura(df):
 
     df.columns = cols
 
-    # 🧹 remover colunas totalmente vazias
-    df = df.dropna(axis=1, how="all")
-
-    # 🧹 remover linhas totalmente vazias
-    df = df.dropna(axis=0, how="all")
-
-    # 🧹 remover colunas com nome vazio ou None
-    df = df.loc[:, df.columns.astype(str).str.strip() != ""]
-    df = df.loc[:, ~df.columns.astype(str).str.upper().isin(["NONE", "NAN"])]
-
-    df.columns = [col.strip("_") for col in df.columns]
-    df.columns = [col.replace("__", "_") for col in df.columns]
-
     return df
 
 # ==============================
 # 🧠 LIMPAR SLA
 # ==============================
+
+def limpar_df(df):
+
+    # remover linhas e colunas totalmente vazias
+    df = df.dropna(axis=0, how="all")
+    df = df.dropna(axis=1, how="all")
+
+    # remover colunas lixo
+    df = df.loc[:, ~df.columns.astype(str).str.contains("UNNAMED|NONE|NAN", case=False)]
+
+    # limpar nomes
+    df.columns = [str(col).strip() for col in df.columns]
+
+    return df
+
 def limpar_sla(valor):
-    if pd.isna(valor):
-        return ""
-    valor = str(valor)
-    valor = valor.replace("dia(s)", "d")
-    valor = valor.replace("hora(s)", "h")
-    valor = valor.replace("minutos", "m")
-    valor = valor.replace("e", "")
-    return valor.strip()
+        if pd.isna(valor):
+            return ""
+        valor = str(valor)
+        valor = valor.replace("dia(s)", "d")
+        valor = valor.replace("hora(s)", "h")
+        valor = valor.replace("minutos", "m")
+        valor = valor.replace("e", "")
+        
+        return valor.strip()
 
 # ==============================
 # 🎨 FORMATAR DADOS
@@ -180,10 +176,10 @@ def formatar_dados(df):
 
     for col in df.columns:
 
-        col_upper = col.upper()
+        nome = col.upper()
 
-        # 💰 MONETÁRIO
-        if any(x in col_upper for x in ["VALOR", "PMT", "INADIMPL"]):
+        # 💰 MOEDA
+        if any(x in nome for x in ["VALOR", "PMT", "INADIMPL"]):
             df[col] = pd.to_numeric(df[col], errors="coerce")
             df[col] = df[col].apply(
                 lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -191,15 +187,21 @@ def formatar_dados(df):
             )
 
         # 📊 PORCENTAGEM
-        elif "%" in col or "PERCENT" in col_upper:
+        elif "%" in nome or "PERCENT" in nome:
             df[col] = pd.to_numeric(df[col], errors="coerce")
             df[col] = df[col].apply(
-                lambda x: f"{x:.2%}".replace(".", ",") if pd.notnull(x) else ""
+                lambda x: f"{x:.2%}".replace(".", ",")
+                if pd.notnull(x) else ""
             )
 
         # ⏱ SLA
-        elif "SLA" in col_upper:
-            df[col] = df[col].apply(limpar_sla)
+        elif "SLA" in nome:
+            df[col] = df[col].astype(str)
+            df[col] = df[col].str.replace("dia(s)", "d")
+            df[col] = df[col].str.replace("hora(s)", "h")
+            df[col] = df[col].str.replace("minutos", "m")
+            df[col] = df[col].str.replace("e", "")
+            df[col] = df[col].str.strip()
 
     return df
 
@@ -212,67 +214,45 @@ def aplicar_filtros(df):
 
     col1, col2 = st.columns(2)
 
-    # ==============================
-    # 🔍 IDENTIFICAR COLUNA DE DATA
-    # ==============================
+    # identificar coluna de data
     col_data = None
-
     for col in df.columns:
-        nome = col.upper()
-        if "DATA" in nome or "CHEGADA" in nome:
+        if "DATA" in col.upper() or "CHEGADA" in col.upper():
             col_data = col
             break
 
-    # ==============================
-    # 🏢 FILTRO CONVÊNIO
-    # ==============================
+    # convênio
     with col1:
         if "CONVENIO" in df.columns:
             lista = sorted(df["CONVENIO"].dropna().unique())
-
-            filtro_convenio = st.multiselect(
-                "Convênio",
-                options=lista
-            )
+            filtro_convenio = st.multiselect("Convênio", lista)
         else:
             filtro_convenio = []
 
-    # ==============================
-    # 📅 FILTRO DATA (SE EXISTIR)
-    # ==============================
+    # data
     with col2:
         if col_data:
-
             df[col_data] = pd.to_datetime(df[col_data], errors="coerce")
-
             datas_validas = df[col_data].dropna()
 
             if not datas_validas.empty:
-                data_min = datas_validas.min()
-                data_max = datas_validas.max()
-
                 filtro_data = st.date_input(
                     "Período",
-                    value=(data_min, data_max)
+                    value=(datas_validas.min(), datas_validas.max())
                 )
             else:
                 filtro_data = None
         else:
             filtro_data = None
 
-    # ==============================
-    # 🎯 APLICAR FILTROS
-    # ==============================
+    # aplicar
     df_filtrado = df.copy()
 
     if filtro_convenio:
-        df_filtrado = df_filtrado[
-            df_filtrado["CONVENIO"].isin(filtro_convenio)
-        ]
+        df_filtrado = df_filtrado[df_filtrado["CONVENIO"].isin(filtro_convenio)]
 
     if filtro_data and col_data:
         inicio, fim = filtro_data
-
         df_filtrado = df_filtrado[
             (df_filtrado[col_data] >= pd.to_datetime(inicio)) &
             (df_filtrado[col_data] <= pd.to_datetime(fim))
