@@ -136,7 +136,28 @@ def ajustar_estrutura(df):
             count[col] = 0
             cols.append(col)
 
-    df.columns = cols
+    df.columns = [col.strip("_") for col in df.columns]
+    df.columns = [col.replace("__", "_") for col in df.columns]
+
+    # 🔥 PADRONIZA NOMES IMPORTANTES
+    novas_cols = []
+
+    for col in df.columns:
+        col_norm = col.upper()
+
+        if "CONVENIO" in col_norm:
+            novas_cols.append("CONVENIO")
+
+        elif "VALOR" in col_norm:
+            novas_cols.append(col_norm)
+
+        elif "INADIMPL" in col_norm:
+            novas_cols.append(col_norm)
+
+        else:
+            novas_cols.append(col_norm)
+
+    df.columns = novas_cols
 
     return df
 
@@ -178,17 +199,19 @@ def formatar_dados(df):
 
         nome = col.upper()
 
-        # 💰 MOEDA
-        if any(x in nome for x in ["VALOR", "PMT", "INADIMPL"]):
+        # 💰 MONETÁRIO
+        if any(x in nome for x in ["VALOR", "PMT", "INADIMPL", "RECEBIDO"]):
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
             df[col] = df[col].apply(
                 lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 if pd.notnull(x) else ""
             )
 
         # 📊 PORCENTAGEM
-        elif "%" in nome or "PERCENT" in nome:
+        elif any(x in nome for x in ["%", "PERCENT", "TAXA"]):
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
             df[col] = df[col].apply(
                 lambda x: f"{x:.2%}".replace(".", ",")
                 if pd.notnull(x) else ""
@@ -223,8 +246,15 @@ def aplicar_filtros(df):
 
     # convênio
     with col1:
-        if "CONVENIO" in df.columns:
-            lista = sorted(df["CONVENIO"].dropna().unique())
+        col_convenio = None
+
+        for col in df.columns:
+            if "CONVENIO" in col.upper():
+                col_convenio = col
+                break
+
+        if col_convenio:
+            lista = sorted(df[col_convenio].dropna().unique())
             filtro_convenio = st.multiselect("Convênio", lista)
         else:
             filtro_convenio = []
@@ -248,8 +278,8 @@ def aplicar_filtros(df):
     # aplicar
     df_filtrado = df.copy()
 
-    if filtro_convenio:
-        df_filtrado = df_filtrado[df_filtrado["CONVENIO"].isin(filtro_convenio)]
+    if filtro_convenio and col_convenio:
+        df_filtrado = df_filtrado[df_filtrado[col_convenio].isin(filtro_convenio)]
 
     if filtro_data and col_data:
         inicio, fim = filtro_data
